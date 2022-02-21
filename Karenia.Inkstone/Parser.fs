@@ -57,17 +57,31 @@ type AstNode<'u> =
         length: int64
     }
 
-type InternalState =
+type St =
     {
         parenStack: bool list
     }
     static member Default = { parenStack = list.Empty }
 
 module Parser =
-    let lf<'u> = newline >>. preturn ()
-    let sp<'u> = many1Chars (anyOf " \t") >>. preturn ()
+    /// Get the current position in the char stream
+    let currPos<'u> (charStream: CharStream<'u>) = Reply charStream.Index
 
-    let lfi = getUserState
+    /// Wrap the current parsing result inside an <see>AstNode</see>
+    let astNode<'ch, 'u> (parser: Parser<'ch, 'u>) =
+        pipe3 currPos parser currPos (fun s v e ->
+            ({ node = v; offset = s; length = e - s }))
+
+    let lf = skipNewline
+    let sp = skipAnyOf " \t"
+
+    let lfi =
+        getUserState<St>
+        >>= (fun st ->
+            if st.parenStack.Head then
+                skipMany (lf >>. sp)
+            else
+                sp)
 
     let numLit<'u> =
         numberLiteral
@@ -80,8 +94,9 @@ module Parser =
         pstring "nil" <?> "nil literal" |>> fun _ -> Nil
 
     let boolLit<'u> =
-        (pstring "true" |>> fun _ -> Boolean true)
-        <|> (pstring "false" |>> fun _ -> Boolean false)
+        ((pstring "true" |>> fun _ -> Boolean true)
+         <|> (pstring "false" |>> fun _ -> Boolean false))
+        <?> "boolean literal"
 
     let pSimpleEscape<'u> =
         pchar '\\' >>. anyOf "rntb\\\"'"
@@ -108,9 +123,13 @@ module Parser =
              <|> many1CharsTill (noneOf " \t\n") spaces)
         |>> Symbol
 
+    let stringLit<'u> = stringLitInternal |>> String
+
     let lit<'u> =
-        numLit <|> nilLit <|> boolLit <|> symbolLit
+        numLit
+        <|> nilLit
+        <|> boolLit
+        <|> symbolLit
+        <|> stringLit
 
-
-
-    let expr<'u> = lit
+    let expr<'u> = astNode (lit |>> LiteralExpr)
