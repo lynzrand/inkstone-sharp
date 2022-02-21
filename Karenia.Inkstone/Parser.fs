@@ -42,6 +42,7 @@ type WhileExpr = { cond: Expr; body: Expr }
 type Expr =
     | BinaryExpr of BinaryExpr
     | UnaryExpr of UnaryExpr
+    | ParenExpr of Expr
     | LiteralExpr of Literal
     | IdentExpr of string
     | IfExpr of IfExpr
@@ -56,10 +57,17 @@ type AstNode<'u> =
         length: int64
     }
 
+type InternalState =
+    {
+        parenStack: bool list
+    }
+    static member Default = { parenStack = list.Empty }
+
 module Parser =
-    let lf<'u> = newline
-    let sp<'u> = anyOf " \t"
-    let lfi<'u> in_p = if in_p then lf else sp
+    let lf<'u> = newline >>. preturn ()
+    let sp<'u> = many1Chars (anyOf " \t") >>. preturn ()
+
+    let lfi = getUserState
 
     let numLit<'u> =
         numberLiteral
@@ -75,6 +83,34 @@ module Parser =
         (pstring "true" |>> fun _ -> Boolean true)
         <|> (pstring "false" |>> fun _ -> Boolean false)
 
-    let lit<'u> = numLit <|> nilLit <|> boolLit
+    let pSimpleEscape<'u> =
+        pchar '\\' >>. anyOf "rntb\\\"'"
+        |>> fun ch ->
+                match ch with
+                | 'r' -> '\r'
+                | 'n' -> '\n'
+                | 't' -> '\t'
+                | 'b' -> '\b'
+                | '\\' -> '\\'
+                | '\"' -> '\"'
+                | '\'' -> '\''
+                | _ -> failwith "Unreachable!"
+
+    let stringLitInternal<'u> =
+        pchar '"'
+        >>. many (pSimpleEscape <|> noneOf "\\\"")
+        .>> pchar '"'
+        |>> string
+
+    let symbolLit<'u> =
+        pchar ':'
+        >>. (stringLitInternal
+             <|> many1CharsTill (noneOf " \t\n") spaces)
+        |>> Symbol
+
+    let lit<'u> =
+        numLit <|> nilLit <|> boolLit <|> symbolLit
+
+
 
     let expr<'u> = lit
