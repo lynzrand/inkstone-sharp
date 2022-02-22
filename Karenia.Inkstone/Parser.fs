@@ -19,14 +19,23 @@ type BinaryOp =
     | BitXor
     | BoolAnd
     | BoolOr
+    | Gt
+    | Ge
+    | Lt
+    | Le
+    | Eq
+    | Neq
 
 type UnaryOp =
     | Not
+    | Pos
     | Neg
 
 type BinaryExpr = { lhs: Expr; rhs: Expr; op: BinaryOp }
 
 type UnaryExpr = { lhs: Expr; op: UnaryOp }
+
+type AssignExpr = { lhs: LExpr; rhs: Expr }
 
 type IfExpr =
     {
@@ -36,6 +45,8 @@ type IfExpr =
     }
 
 type WhileExpr = { cond: Expr; body: Expr }
+
+type LExpr = Ident of string
 
 type Expr =
     | BinaryExpr of BinaryExpr
@@ -143,7 +154,7 @@ module Parser =
         <|> symbolLit
         <|> stringLit
 
-    let expr, exprRef =
+    let mutable expr, exprRef =
         createParserForwardedToRef<Expr AstNode, St> ()
 
     let binOpParser<'u> =
@@ -160,24 +171,53 @@ module Parser =
                 )
             )
 
-        addBin "**" 70 Associativity.Left Pow
+        let addUnary op prec bop =
+            parser.AddOperator(
+                PrefixOperator(
+                    op,
+                    expr,
+                    prec,
+                    true,
+                    fun l -> UnaryExpr { lhs = l; op = bop }
+                )
+            )
 
-        addBin "*" 60 Associativity.Left Mul
-        addBin "/" 60 Associativity.Left Div
-        addBin "%" 60 Associativity.Left Mod
+        addBin "." 120 Associativity.Left Pow
 
-        addBin "+" 50 Associativity.Left Add
-        addBin "-" 50 Associativity.Left Sub
+        addBin "**" 90 Associativity.Left Pow
 
-        addBin "and" 20 Associativity.Left BoolAnd
+        addBin "*" 80 Associativity.Left Mul
+        addBin "/" 80 Associativity.Left Div
+        addBin "%" 80 Associativity.Left Mod
 
-        addBin "or" 10 Associativity.Left BoolOr
+        addBin "&" 70 Associativity.Left BitAnd
+        addBin "|" 70 Associativity.Left BitOr
+        addBin "^" 70 Associativity.Left BitXor
+
+        addBin "+" 60 Associativity.Left Add
+        addBin "-" 60 Associativity.Left Sub
+
+        addBin ">" 50 Associativity.None Gt
+        addBin "<" 50 Associativity.None Lt
+        addBin "==" 50 Associativity.None Eq
+        addBin "!=" 50 Associativity.None Neq
+        addBin ">=" 50 Associativity.None Ge
+        addBin "<=" 50 Associativity.None Le
+
+        addBin "and" 40 Associativity.Left BoolAnd
+        addBin "or" 30 Associativity.Left BoolOr
+
+        addUnary "+" 110 Pos
+        addUnary "-" 110 Neg
+        addUnary "!" 110 Not
+
+        addUnary "not" 20 Not
 
         parser
 
     do
-        exprRef
-        := astNode (
-            choice [ lit |>> LiteralExpr
-                     binOpParser ]
-        )
+        exprRef.Value <-
+            astNode (
+                choice [ lit |>> LiteralExpr
+                         binOpParser ]
+            )
