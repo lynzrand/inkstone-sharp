@@ -1,9 +1,7 @@
-namespace rec Karenia.Inkstone.Parser
-
-open FParsec
+namespace rec Karenia.Inkstone.Parser.Ast
 
 type Literal =
-    | Number of NumberLiteral
+    | Number of FParsec.CharParsers.NumberLiteral
     | String of string
     | Symbol of string
     | Boolean of bool
@@ -57,6 +55,11 @@ type AstNode<'u> =
         length: int64
     }
 
+namespace Karenia.Inkstone.Parser
+
+open FParsec
+open Karenia.Inkstone.Parser.Ast
+
 type St =
     {
         parenStack: bool list
@@ -72,14 +75,22 @@ module Parser =
         pipe3 currPos parser currPos (fun s v e ->
             ({ node = v; offset = s; length = e - s }))
 
-    let lf = skipNewline
-    let sp = skipAnyOf " \t"
+    /// Parse a line feed
+    let lf<'u> = skipNewline
 
+    /// Parse a non-linefeed space
+    let sp (cs: CharStream<'u>) =
+        while isAnyOf " \t\xa0" (cs.Peek()) do
+            cs.Read() |> ignore
+
+        Reply(())
+
+    /// Parse a line-feed or non-line-feed based on parentheses stack
     let lfi =
         getUserState<St>
         >>= (fun st ->
             if st.parenStack.Head then
-                skipMany (lf >>. sp)
+                spaces
             else
                 sp)
 
@@ -132,4 +143,41 @@ module Parser =
         <|> symbolLit
         <|> stringLit
 
-    let expr<'u> = astNode (lit |>> LiteralExpr)
+    let expr, exprRef =
+        createParserForwardedToRef<Expr AstNode, St> ()
+
+    let binOpParser<'u> =
+        let parser = OperatorPrecedenceParser()
+
+        let addBin op prec ass bop =
+            parser.AddOperator(
+                InfixOperator(
+                    op,
+                    expr,
+                    prec,
+                    ass,
+                    fun l r -> BinaryExpr { lhs = l; rhs = r; op = bop }
+                )
+            )
+
+        addBin "**" 70 Associativity.Left Pow
+
+        addBin "*" 60 Associativity.Left Mul
+        addBin "/" 60 Associativity.Left Div
+        addBin "%" 60 Associativity.Left Mod
+
+        addBin "+" 50 Associativity.Left Add
+        addBin "-" 50 Associativity.Left Sub
+
+        addBin "and" 20 Associativity.Left BoolAnd
+
+        addBin "or" 10 Associativity.Left BoolOr
+
+        parser
+
+    do
+        exprRef
+        := astNode (
+            choice [ lit |>> LiteralExpr
+                     binOpParser ]
+        )
